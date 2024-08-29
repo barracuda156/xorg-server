@@ -34,8 +34,8 @@
 #include <dix-config.h>
 #endif
 
-#import "X11Application.h"
-#import "NSUserDefaults+XQuartzDefaults.h"
+#include "X11Application.h"
+#include "NSUserDefaults+XQuartzDefaults.h"
 
 #include "darwin.h"
 #include "quartz.h"
@@ -60,9 +60,10 @@ xpbproxy_run(void);
 #define XSERVER_VERSION "?"
 #endif
 
+#if HAVE_LIBDISPATCH
 #include <dispatch/dispatch.h>
-
 static dispatch_queue_t eventTranslationQueue;
+#endif
 
 #ifndef __has_feature
 #define __has_feature(x) 0
@@ -103,7 +104,7 @@ X11Application *X11App;
 #define ALL_KEY_MASKS (NSShiftKeyMask | NSControlKeyMask | \
                        NSAlternateKeyMask | NSCommandKeyMask)
 
-#if APPKIT_APPFLAGS_HACK && __MAC_OS_X_VERSION_MAX_ALLOWED >= 101500
+#if APPKIT_APPFLAGS_HACK && MAC_OS_X_VERSION_MAX_ALLOWED >= 101500
 // This was removed from the SDK in 10.15
 @interface NSApplication () {
 @protected
@@ -169,14 +170,72 @@ struct message_struct {
     NSObject *arg;
 };
 
+static mach_port_t _port;
+
 /* Quartz mode initialization routine. This is often dynamically loaded
    but is statically linked into this X server. */
 Bool
 QuartzModeBundleInit(void);
 
+static void
+init_ports(void)
+{
+    kern_return_t r;
+    NSPort *p;
+
+    if (_port != MACH_PORT_NULL) return;
+
+    r = mach_port_allocate(mach_task_self(), MACH_PORT_RIGHT_RECEIVE, &_port);
+    if (r != KERN_SUCCESS) return;
+
+    p = [NSMachPort portWithMachPort:_port];
+    [p setDelegate:NSApp];
+    [p scheduleInRunLoop:[NSRunLoop currentRunLoop] forMode:
+     NSDefaultRunLoopMode];
+}
+
+static void
+message_kit_thread(SEL selector, NSObject *arg)
+{
+    message msg;
+    kern_return_t r;
+
+    msg.hdr.msgh_bits = MACH_MSGH_BITS(MACH_MSG_TYPE_MAKE_SEND, 0);
+    msg.hdr.msgh_size = sizeof(msg);
+    msg.hdr.msgh_remote_port = _port;
+    msg.hdr.msgh_local_port = MACH_PORT_NULL;
+    msg.hdr.msgh_reserved = 0;
+    msg.hdr.msgh_id = 0;
+
+    msg.selector = selector;
+    msg.arg = [arg retain];
+
+    r = mach_msg(&msg.hdr, MACH_SEND_MSG, msg.hdr.msgh_size,
+                 0, MACH_PORT_NULL, 0, MACH_PORT_NULL);
+    if (r != KERN_SUCCESS)
+        ErrorF("%s: mach_msg failed: %x\n", __FUNCTION__, r);
+}
+
+- (void) handleMachMessage:(void *)_msg
+{
+    message *msg = _msg;
+
+    [self performSelector:msg->selector withObject:msg->arg];
+    [msg->arg release];
+}
+
+- (void) set_controller:obj
+{
+    if (_controller == nil) _controller = [obj retain];
+}
+
 - (void) dealloc
 {
-    self.controller = nil;
+    if (_controller != nil) [_controller release];
+
+    if (_port != MACH_PORT_NULL)
+        mach_port_deallocate(mach_task_self(), _port);
+
     [super dealloc];
 }
 
@@ -473,9 +532,7 @@ QuartzModeBundleInit(void);
     }
 
     if (for_x) {
-        dispatch_async(eventTranslationQueue, ^{
-            [self sendX11NSEvent:e];
-        });
+        [self sendX11NSEvent:e];
     }
 }
 
@@ -560,83 +617,123 @@ QuartzModeBundleInit(void);
                        AppleWMCopyToPasteboard);
 }
 
+- (X11Controller *) controller
+{
+    return _controller;
+}
+
+- (OSX_BOOL) x_active
+{
+    return _x_active;
+}
+
 @end
+
+static NSArray *
+array_with_strings_and_numbers(int nitems, const char **items,
+                               const char *numbers)
+{
+    NSMutableArray *array, *subarray;
+    NSString *string, *number;
+    int i;
+
+    /* (Can't autorelease on the X server thread) */
+
+    array = [[NSMutableArray alloc] initWithCapacity:nitems];
+
+    for (i = 0; i < nitems; i++) {
+        subarray = [[NSMutableArray alloc] initWithCapacity:2];
+
+        string = [[NSString alloc] initWithUTF8String:items[i]];
+        [subarray addObject:string];
+        [string release];
+
+        if (numbers[i] != 0) {
+            number = [[NSString alloc] initWithFormat:@"%d", numbers[i]];
+            [subarray addObject:number];
+            [number release];
+        }
+        else
+            [subarray addObject:@""];
+
+        [array addObject:subarray];
+        [subarray release];
+    }
+
+    return array;
+}
 
 void
 X11ApplicationSetWindowMenu(int nitems, const char **items,
                             const char *shortcuts)
 {
-    @autoreleasepool {
-        NSMutableArray <NSArray <NSString *> *> * const allMenuItems = [NSMutableArray array];
+    NSArray *array;
+    array = array_with_strings_and_numbers(nitems, items, shortcuts);
 
-        for (int i = 0; i < nitems; i++) {
-            NSMutableArray <NSString *> * const menuItem = [NSMutableArray array];
-            [menuItem addObject:@(items[i])];
+    /* Send the array of strings over to the appkit thread */
 
-            if (shortcuts[i] == 0) {
-                [menuItem addObject:@""];
-            } else {
-                [menuItem addObject:[NSString stringWithFormat:@"%d", shortcuts[i]]];
-            }
-
-            [allMenuItems addObject:menuItem];
-        }
-
-        dispatch_async(dispatch_get_main_queue(), ^{
-            [X11App.controller set_window_menu:allMenuItems];
-        });
-    }
+    message_kit_thread(@selector (set_window_menu:), array);
+    [array release];
 }
 
 void
 X11ApplicationSetWindowMenuCheck(int idx)
 {
-    dispatch_async(dispatch_get_main_queue(), ^{
-        [X11App.controller set_window_menu_check:@(idx)];
-    });
+    NSNumber *n;
+
+    n = [[NSNumber alloc] initWithInt:idx];
+
+    message_kit_thread(@selector (set_window_menu_check:), n);
+
+    [n release];
 }
 
 void
 X11ApplicationSetFrontProcess(void)
 {
-    dispatch_async(dispatch_get_main_queue(), ^{
-        [X11App set_front_process:nil];
-    });
+    message_kit_thread(@selector (set_front_process:), nil);
 }
 
 void
 X11ApplicationSetCanQuit(int state)
 {
-    dispatch_async(dispatch_get_main_queue(), ^{
-        X11App.controller.can_quit = !!state;
-    });
+    NSNumber *n;
+
+    n = [[NSNumber alloc] initWithBool:state];
+
+    message_kit_thread(@selector (set_can_quit:), n);
+
+    [n release];
 }
 
 void
 X11ApplicationServerReady(void)
 {
-    dispatch_async(dispatch_get_main_queue(), ^{
-        [X11App.controller server_ready];
-    });
+    message_kit_thread(@selector (server_ready:), nil);
 }
 
 void
 X11ApplicationShowHideMenubar(int state)
 {
-    dispatch_async(dispatch_get_main_queue(), ^{
-        [X11App show_hide_menubar:@(state)];
-    });
+    NSNumber *n;
+
+    n = [[NSNumber alloc] initWithBool:state];
+
+    message_kit_thread(@selector (show_hide_menubar:), n);
+
+    [n release];
 }
 
 void
 X11ApplicationLaunchClient(const char *cmd)
 {
-    @autoreleasepool {
-        NSString *string = @(cmd);
-        dispatch_async(dispatch_get_main_queue(), ^{
-            [X11App launch_client:string];
-        });
-    }
+    NSString *string;
+
+    string = [[NSString alloc] initWithUTF8String:cmd];
+
+    message_kit_thread(@selector (launch_client:), string);
+
+    [string release];
 }
 
 /* This is a special function in that it is run from the *SERVER* thread and
@@ -647,9 +744,8 @@ Bool
 X11ApplicationCanEnterRandR(void)
 {
     NSString *title, *msg;
-    NSUserDefaults * const defaults = NSUserDefaults.xquartzDefaults;
 
-    if ([defaults boolForKey:XQuartzPrefKeyNoRANDRAlert] ||
+    if ([X11App prefs_get_boolean:@PREFS_NO_RANDR_ALERT default:NO] ||
         XQuartzShieldingWindowLevel != 0)
         return TRUE;
 
@@ -662,17 +758,15 @@ X11ApplicationCanEnterRandR(void)
     if (!XQuartzIsRootless)
         QuartzShowFullscreen(FALSE);
 
-    NSInteger __block alert_result;
-    dispatch_sync(dispatch_get_main_queue(), ^{
-        alert_result = NSRunAlertPanel(title, @"%@",
-                                       NSLocalizedString(@"Allow", @""),
-                                       NSLocalizedString(@"Cancel", @""),
-                                       NSLocalizedString(@"Always Allow", @""), msg);
-    });
-
-    switch (alert_result) {
+    switch (NSRunAlertPanel(title, @"%@",
+                            NSLocalizedString(@"Allow",
+                                              @""),
+                            NSLocalizedString(@"Cancel",
+                                              @""),
+                            NSLocalizedString(@"Always Allow", @""), msg)) {
     case NSAlertOtherReturn:
-        [defaults setBool:YES forKey:XQuartzPrefKeyNoRANDRAlert];
+        [X11App prefs_set_boolean:@PREFS_NO_RANDR_ALERT value:YES];
+        [X11App prefs_synchronize];
 
     case NSAlertDefaultReturn:
         return YES;
@@ -756,35 +850,54 @@ xpbproxy_x_thread(void *args)
 void
 X11ApplicationMain(int argc, char **argv, char **envp)
 {
+    NSAutoreleasePool *pool;
+
 #ifdef DEBUG
     while (access("/tmp/x11-block", F_OK) == 0) sleep(1);
 #endif
 
-    @autoreleasepool {
-        X11App = (X11Application *)[X11Application sharedApplication];
-        [X11App read_defaults];
+    pool = [[NSAutoreleasePool alloc] init];
+    X11App = (X11Application *)[X11Application sharedApplication];
+    init_ports();
 
-        [NSBundle loadNibNamed:@"main" owner:NSApp];
-        [NSNotificationCenter.defaultCenter addObserver:NSApp
-                                               selector:@selector (became_key:)
-                                                   name:NSWindowDidBecomeKeyNotification
-                                                 object:nil];
+    app_prefs_domain_cfstr =
+        (CFStringRef)[[NSBundle mainBundle] bundleIdentifier];
 
-        /*
-         * The xpr Quartz mode is statically linked into this server.
-         * Initialize all the Quartz functions.
-         */
-        QuartzModeBundleInit();
+    if (app_prefs_domain_cfstr == NULL) {
+        ErrorF(
+            "X11ApplicationMain: Unable to determine bundle identifier.  Your installation of XQuartz may be broken.\n");
+        app_prefs_domain_cfstr = CFSTR(BUNDLE_ID_PREFIX ".X11");
+    }
 
-        /* Calculate the height of the menubar so we can avoid it. */
-        aquaMenuBarHeight = NSApp.mainMenu.menuBarHeight;
+    [NSApp read_defaults];
+    [NSBundle loadNibNamed:@"main" owner:NSApp];
+    [[NSNotificationCenter defaultCenter] addObserver:NSApp
+                                             selector:@selector (became_key:)
+                                                 name:
+     NSWindowDidBecomeKeyNotification object:nil];
+
+    /*
+     * The xpr Quartz mode is statically linked into this server.
+     * Initialize all the Quartz functions.
+     */
+    QuartzModeBundleInit();
+
+    /* Calculate the height of the menubar so we can avoid it. */
+    aquaMenuBarHeight = [[NSApp mainMenu] menuBarHeight];
+#if ! __LP64__
+        if (!aquaMenuBarHeight) {
+            aquaMenuBarHeight = [NSMenuView menuBarHeight];
+        }
+#endif
         if (!aquaMenuBarHeight) {
             NSScreen* primaryScreen = NSScreen.screens[0];
             aquaMenuBarHeight = NSHeight(primaryScreen.frame) - NSMaxY(primaryScreen.visibleFrame);
         }
 
+#if HAVE_LIBDISPATCH
         eventTranslationQueue = dispatch_queue_create(BUNDLE_ID_PREFIX ".X11.NSEventsToX11EventsQueue", NULL);
         assert(eventTranslationQueue != NULL);
+#endif
 
         /* Set the key layout seed before we start the server */
         last_key_layout = TISCopyCurrentKeyboardLayoutInputSource();
@@ -814,6 +927,7 @@ X11ApplicationMain(int argc, char **argv, char **envp)
 #endif
     }
 
+    [pool release];
     [NSApp run];
     /* not reached */
 }
@@ -1326,17 +1440,8 @@ handle_mouse:
     }
 
         if (darwinSyncKeymap) {
-            __block TISInputSourceRef key_layout;
-            dispatch_block_t copyCurrentKeyboardLayoutInputSource = ^{
-                key_layout = TISCopyCurrentKeyboardLayoutInputSource();
-            };
-            /* This is an ugly ant-pattern, but it is more expedient to address the problem right now. */
-            if (pthread_main_np()) {
-                copyCurrentKeyboardLayoutInputSource();
-            } else {
-                dispatch_sync(dispatch_get_main_queue(), copyCurrentKeyboardLayoutInputSource);
-            }
-
+            TISInputSourceRef key_layout = 
+                TISCopyCurrentKeyboardLayoutInputSource();
             TISInputSourceRef clear;
             if (CFEqual(key_layout, last_key_layout)) {
                 CFRelease(key_layout);

@@ -46,43 +46,48 @@
 #undef BOOL
 #endif
 
-@interface X11Controller : NSObject <NSTableViewDataSource>
-@property (nonatomic, readwrite, strong) IBOutlet NSPanel *prefs_panel;
+@interface X11Controller : NSObject
+#if MAC_OS_X_VERSION_MIN_REQUIRED >= 1060 && !defined __ppc__
+    <NSTableViewDataSource>
+#endif
+{
+    IBOutlet NSPanel *prefs_panel;
 
-@property (nonatomic, readwrite, strong) IBOutlet NSButton *fake_buttons;
-@property (nonatomic, readwrite, strong) IBOutlet NSButton *enable_fullscreen;
-@property (nonatomic, readwrite, strong) IBOutlet NSButton *enable_fullscreen_menu;
-@property (nonatomic, readwrite, strong) IBOutlet NSTextField *enable_fullscreen_menu_text;
-@property (nonatomic, readwrite, strong) IBOutlet NSButton *enable_keyequivs;
-@property (nonatomic, readwrite, strong) IBOutlet NSButton *sync_keymap;
-@property (nonatomic, readwrite, strong) IBOutlet NSButton *option_sends_alt;
-@property (nonatomic, readwrite, strong) IBOutlet NSButton *scroll_in_device_direction;
-@property (nonatomic, readwrite, strong) IBOutlet NSButton *click_through;
-@property (nonatomic, readwrite, strong) IBOutlet NSButton *focus_follows_mouse;
-@property (nonatomic, readwrite, strong) IBOutlet NSButton *focus_on_new_window;
-@property (nonatomic, readwrite, strong) IBOutlet NSButton *enable_auth;
-@property (nonatomic, readwrite, strong) IBOutlet NSButton *enable_tcp;
-@property (nonatomic, readwrite, strong) IBOutlet NSButton *sync_pasteboard;
-@property (nonatomic, readwrite, strong) IBOutlet NSButton *sync_pasteboard_to_clipboard;
-@property (nonatomic, readwrite, strong) IBOutlet NSButton *sync_pasteboard_to_primary;
-@property (nonatomic, readwrite, strong) IBOutlet NSButton *sync_clipboard_to_pasteboard;
-@property (nonatomic, readwrite, strong) IBOutlet NSButton *sync_primary_immediately;
-@property (nonatomic, readwrite, strong) IBOutlet NSTextField *sync_text1;
-@property (nonatomic, readwrite, strong) IBOutlet NSTextField *sync_text2;
-@property (nonatomic, readwrite, strong) IBOutlet NSPopUpButton *depth;
+    IBOutlet NSButton *fake_buttons;
+    IBOutlet NSButton *enable_fullscreen;
+    IBOutlet NSButton *enable_fullscreen_menu;
+    IBOutlet NSTextField *enable_fullscreen_menu_text;
+    IBOutlet NSButton *enable_keyequivs;
+    IBOutlet NSButton *sync_keymap;
+    IBOutlet NSButton *option_sends_alt;
+    IBOutlet NSButton *scroll_in_device_direction;
+    IBOutlet NSButton *click_through;
+    IBOutlet NSButton *focus_follows_mouse;
+    IBOutlet NSButton *focus_on_new_window;
+    IBOutlet NSButton *enable_auth;
+    IBOutlet NSButton *enable_tcp;
+    IBOutlet NSButton *sync_pasteboard;
+    IBOutlet NSButton *sync_pasteboard_to_clipboard;
+    IBOutlet NSButton *sync_pasteboard_to_primary;
+    IBOutlet NSButton *sync_clipboard_to_pasteboard;
+    IBOutlet NSButton *sync_primary_immediately;
+    IBOutlet NSTextField *sync_text1;
+    IBOutlet NSTextField *sync_text2;
+    IBOutlet NSPopUpButton *depth;
 
-@property (nonatomic, readwrite, strong) IBOutlet NSMenuItem *x11_about_item;
-@property (nonatomic, readwrite, strong) IBOutlet NSMenuItem *dock_window_separator;
-@property (nonatomic, readwrite, strong) IBOutlet NSMenuItem *apps_separator;
-@property (nonatomic, readwrite, strong) IBOutlet NSMenuItem *toggle_fullscreen_item;
+    IBOutlet NSMenuItem *x11_about_item;
+    IBOutlet NSMenuItem *dock_window_separator;
+    IBOutlet NSMenuItem *apps_separator;
+    IBOutlet NSMenuItem *toggle_fullscreen_item;
 
-@property (nonatomic, readwrite, strong) IBOutlet NSMenuItem *copy_menu_item;
-@property (nonatomic, readwrite, strong) IBOutlet NSMenu *dock_apps_menu;
-@property (nonatomic, readwrite, strong) IBOutlet NSTableView *apps_table;
+    IBOutlet NSMenuItem *copy_menu_item;
+    IBOutlet NSMenu *dock_apps_menu;
+    IBOutlet NSTableView *apps_table;
 
-@property (nonatomic, readwrite, strong) IBOutlet NSMenu *dock_menu;
+    IBOutlet NSMenu *dock_menu;
 
-@property (nonatomic, readwrite, assign) OSX_BOOL can_quit;
+    OSX_BOOL can_quit;
+}
 
 - (void)set_window_menu:(NSArray *)list;
 - (void)set_window_menu_check:(NSNumber *)n;

@@ -38,8 +38,6 @@
 #import <AppKit/NSImage.h>
 #import <AppKit/NSBitmapImageRep.h>
 
-#import "NSUserDefaults+XQuartzDefaults.h"
-
 /*
  * The basic design of the pbproxy code is as follows.
  *
@@ -100,6 +98,18 @@ dump_prefs()
            pbproxy_prefs.pasteboard_to_clipboard);
 }
 #endif
+
+extern CFStringRef app_prefs_domain_cfstr;
+
+static BOOL
+prefs_get_bool(CFStringRef key, BOOL defaultValue)
+{
+    Boolean value, ok;
+
+    value = CFPreferencesGetAppBooleanValue(key, app_prefs_domain_cfstr, &ok);
+
+    return ok ? (BOOL)value : defaultValue;
+}
 
 static void
 init_propdata(struct propdata *pdata)
@@ -1384,18 +1394,35 @@ get_property(Window win, Atom property, struct propdata *pdata, Bool delete,
 
 - (void) reload_preferences
 {
-    NSUserDefaults * const defaults = NSUserDefaults.xquartzDefaults;
-
+    /*
+     * It's uncertain how we could handle the synchronization failing, so cast to void.
+     * The prefs_get_bool should fall back to defaults if the org.x.X11 plist doesn't exist or is invalid.
+     */
+    (void)CFPreferencesAppSynchronize(app_prefs_domain_cfstr);
 #ifdef STANDALONE_XPBPROXY
     if (xpbproxy_is_standalone)
         pbproxy_prefs.active = YES;
     else
 #endif
-    pbproxy_prefs.active = [defaults boolForKey:XQuartzPrefKeySyncPasteboard];
-    pbproxy_prefs.primary_on_grab = [defaults boolForKey:XQuartzPrefKeySyncPrimaryOnSelect];
-    pbproxy_prefs.clipboard_to_pasteboard = [defaults boolForKey:XQuartzPrefKeySyncClipboardToPasteBoard];
-    pbproxy_prefs.pasteboard_to_primary = [defaults boolForKey:XQuartzPrefKeySyncPasteboardToPrimary];
-    pbproxy_prefs.pasteboard_to_clipboard = [defaults boolForKey:XQuartzPrefKeySyncPasteboardToClipboard];
+    pbproxy_prefs.active = prefs_get_bool(CFSTR(
+                                              "sync_pasteboard"),
+                                          pbproxy_prefs.active);
+    pbproxy_prefs.primary_on_grab =
+        prefs_get_bool(CFSTR(
+                           "sync_primary_on_select"),
+                       pbproxy_prefs.primary_on_grab);
+    pbproxy_prefs.clipboard_to_pasteboard =
+        prefs_get_bool(CFSTR(
+                           "sync_clipboard_to_pasteboard"),
+                       pbproxy_prefs.clipboard_to_pasteboard);
+    pbproxy_prefs.pasteboard_to_primary =
+        prefs_get_bool(CFSTR(
+                           "sync_pasteboard_to_primary"),
+                       pbproxy_prefs.pasteboard_to_primary);
+    pbproxy_prefs.pasteboard_to_clipboard =
+        prefs_get_bool(CFSTR(
+                           "sync_pasteboard_to_clipboard"),
+                       pbproxy_prefs.pasteboard_to_clipboard);
 
     /* This is used for debugging. */
     //dump_prefs();

@@ -95,16 +95,14 @@ int aquaMenuBarHeight = 0;
 QuartzModeProcsPtr quartzProcs = NULL;
 const char             *quartzOpenGLBundle = NULL;
 
-/* These are initialized by X11Application with default values set in NSUserDefaults+XQuartzDefaults */
-Bool XQuartzFullscreenDisableHotkeys;
-Bool XQuartzOptionSendsAlt;
-Bool XQuartzEnableKeyEquivalents;
-Bool XQuartzFullscreenMenu;
-Bool XQuartzRootlessDefault;
-
+Bool XQuartzFullscreenDisableHotkeys = TRUE;
+Bool XQuartzOptionSendsAlt = FALSE;
+Bool XQuartzEnableKeyEquivalents = TRUE;
 Bool XQuartzFullscreenVisible = FALSE;
+Bool XQuartzRootlessDefault = TRUE;
 Bool XQuartzIsRootless = TRUE;
 Bool XQuartzServerVisible = FALSE;
+Bool XQuartzFullscreenMenu = FALSE;
 
 int32_t XQuartzShieldingWindowLevel = 0;
 

@@ -41,7 +41,6 @@ endif
 
 # libxquartz
 srcs_libxquartz = [
-    'NSUserDefaults+XQuartzDefaults.m',
     'X11Application.m',
     'X11Controller.m',
     'applewm.c',

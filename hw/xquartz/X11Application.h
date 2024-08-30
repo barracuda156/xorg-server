@@ -35,7 +35,7 @@
 
 #if __OBJC__
 
-#import "X11Controller.h"
+#include "X11Controller.h"
 
 @interface X11Application : NSApplication {
     X11Controller *_controller;

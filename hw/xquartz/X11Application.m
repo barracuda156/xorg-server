@@ -478,7 +478,7 @@ message_kit_thread(SEL selector, NSObject *arg)
         case NSApplicationActivatedEventType:
             for_x = NO;
             if ([e window] == nil && x_was_active) {
-                BOOL order_all_windows = YES;
+                BOOL order_all_windows = YES, workspaces, ok;
                 for_appkit = NO;
 
 #if APPKIT_APPFLAGS_HACK
@@ -491,9 +491,26 @@ message_kit_thread(SEL selector, NSObject *arg)
                 [self set_front_process:nil];
 
                 /* Get the Spaces preference for SwitchOnActivate */
-                BOOL const workspaces = [NSUserDefaults.dockDefaults boolForKey:@"workspaces"];
+                (void)CFPreferencesAppSynchronize(CFSTR("com.apple.dock"));
+                workspaces =
+                    CFPreferencesGetAppBooleanValue(CFSTR("workspaces"),
+                                                    CFSTR(
+                                                        "com.apple.dock"),
+                                                    &ok);
+                if (!ok)
+                    workspaces = NO;
+
                 if (workspaces) {
-                    order_all_windows = [NSUserDefaults.globalDefaults boolForKey:@"AppleSpacesSwitchOnActivate"];
+                    (void)CFPreferencesAppSynchronize(CFSTR(
+                                                          ".GlobalPreferences"));
+                    order_all_windows =
+                        CFPreferencesGetAppBooleanValue(CFSTR(
+                                                            "AppleSpacesSwitchOnActivate"),
+                                                        CFSTR(
+                                                            ".GlobalPreferences"),
+                                                        &ok);
+                    if (!ok)
+                        order_all_windows = YES;
                 }
 
                 /* TODO: In the workspaces && !AppleSpacesSwitchOnActivate case, the windows are ordered
@@ -504,7 +521,8 @@ message_kit_thread(SEL selector, NSObject *arg)
                  *       be restoring one of them.
                  */
                 if ([e data2] & 0x10) {         // 0x10 (bfCPSOrderAllWindowsForward) is set when we use cmd-tab or the dock icon
-                    DarwinSendDDXEvent(kXquartzBringAllToFront, 1, order_all_windows);
+                    DarwinSendDDXEvent(kXquartzBringAllToFront, 1,
+                                       order_all_windows);
                 }
             }
             break;
